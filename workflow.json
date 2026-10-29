@@ -1,0 +1,334 @@
+{
+  "name": "Cleaning Service - Production Booking Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cleaning-booking",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "6cd3216a-d768-4c74-b8e5-f5f459de222f",
+      "name": "Webhook - New Booking",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1180,
+        0
+      ],
+      "webhookId": "d60d434a-2b79-4719-a4a2-4ae86001a473"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.body ?? $json;\nfunction required(name){const v=b[name]; if(v===undefined||v===null||String(v).trim()==='') throw new Error(`Missing required field: ${name}`); return String(v).trim();}\nconst name=required('name'); const email=required('email').toLowerCase(); const phone=required('phone'); const address=required('address'); const service=required('service'); const date=required('date'); const time=required('time'); const durationMinutes=Number(b.durationMinutes||120);\nif(!/^\\S+@\\S+\\.\\S+$/.test(email)) throw new Error('Invalid email');\nif(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) throw new Error('Invalid date format');\nif(!/^\\d{2}:\\d{2}$/.test(time)) throw new Error('Invalid time format');\nconst start=new Date(`${date}T${time}:00`); if(Number.isNaN(start.getTime())) throw new Error('Invalid booking datetime'); const end=new Date(start.getTime()+durationMinutes*60000); const bookingId=`CLN-${Date.now()}-${Math.floor(Math.random()*900+100)}`;\nreturn [{json:{bookingId,name,email,phone,address,service,notes:String(b.notes||'').trim(),start:start.toISOString(),end:end.toISOString(),durationMinutes,status:'PENDING',createdAt:new Date().toISOString()}}];"
+      },
+      "id": "f3acdb69-e975-40a1-97d9-67dff90dbd44",
+      "name": "Validate + Normalize Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CALENDAR_ID"
+        },
+        "returnAll": true,
+        "timeMin": "={{$json.start}}",
+        "timeMax": "={{$json.end}}",
+        "options": {}
+      },
+      "id": "0ea88205-44ba-45b5-8308-33395ab5972e",
+      "name": "Check Calendar Availability",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -730,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items=$input.all(); const original=$('Validate + Normalize Booking').first().json; const conflicts=items.filter(i=>{const j=i.json||{}; return Boolean(j.id||j.start||j.summary||j.htmlLink);}); return [{json:{...original,slotAvailable:conflicts.length===0,conflictCount:conflicts.length}}];"
+      },
+      "id": "400cbd0a-0ad2-48cd-9caf-82f873aafe81",
+      "name": "Evaluate Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -510,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "098588f2-b3aa-4338-a716-ba2e64c03d86",
+              "leftValue": "={{$json.slotAvailable}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a766d79-fe98-4e83-9deb-4ed111ff9ee7",
+      "name": "Slot Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.email}}",
+        "subject": "Cleaning booking slot unavailable",
+        "message": "=Hi {{$json.name}},\n\nThanks for your booking request. The selected time is no longer available. Please choose another time and submit the form again.\n\nBooking reference: {{$json.bookingId}}",
+        "options": {}
+      },
+      "id": "4bb8aaf2-7f9e-4214-a61e-7882c1d25f58",
+      "name": "Gmail - Slot Unavailable",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -30,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Bookings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Booking ID": "={{$json.bookingId}}",
+            "Name": "={{$json.name}}",
+            "Email": "={{$json.email}}",
+            "Phone": "={{$json.phone}}",
+            "Address": "={{$json.address}}",
+            "Service": "={{$json.service}}",
+            "Start": "={{$json.start}}",
+            "End": "={{$json.end}}",
+            "Status": "CONFIRMED",
+            "Notes": "={{$json.notes}}",
+            "Created At": "={{$json.createdAt}}"
+          },
+          "matchingColumns": [
+            "Booking ID"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "155a2a94-06a9-4d5b-bb62-c8e90fa74c98",
+      "name": "Google Sheets - Save Booking",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -30,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CALENDAR_ID"
+        },
+        "start": "={{$json.start}}",
+        "end": "={{$json.end}}",
+        "additionalFields": {
+          "summary": "=Cleaning Job - {{$json.name}} - {{$json.service}}",
+          "description": "=Booking ID: {{$json.bookingId}}\nClient: {{$json.name}}\nPhone: {{$json.phone}}\nEmail: {{$json.email}}\nAddress: {{$json.address}}\nService: {{$json.service}}\nNotes: {{$json.notes}}"
+        }
+      },
+      "id": "5388e807-c827-492a-afae-a761f23e8e85",
+      "name": "Google Calendar - Create Job",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$('Validate + Normalize Booking').first().json.email}}",
+        "subject": "=Booking confirmed - {{$('Validate + Normalize Booking').first().json.bookingId}}",
+        "message": "=Hi {{$('Validate + Normalize Booking').first().json.name}},\n\nYour cleaning booking is confirmed.\n\nService: {{$('Validate + Normalize Booking').first().json.service}}\nAddress: {{$('Validate + Normalize Booking').first().json.address}}\nStart: {{$('Validate + Normalize Booking').first().json.start}}\nBooking ID: {{$('Validate + Normalize Booking').first().json.bookingId}}\n\nIf you need to reschedule or cancel, please reply to this email.",
+        "options": {}
+      },
+      "id": "a17058d2-021f-4f35-b12c-6943d25d7bab",
+      "name": "Gmail - Client Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        700,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=NEW CLEANING BOOKING\n\nBooking: {{$('Validate + Normalize Booking').first().json.bookingId}}\nClient: {{$('Validate + Normalize Booking').first().json.name}}\nPhone: {{$('Validate + Normalize Booking').first().json.phone}}\nService: {{$('Validate + Normalize Booking').first().json.service}}\nAddress: {{$('Validate + Normalize Booking').first().json.address}}\nStart: {{$('Validate + Normalize Booking').first().json.start}}",
+        "additionalFields": {}
+      },
+      "id": "d7a1c8d5-bfe3-4d7f-9317-63dfba56f0ec",
+      "name": "Telegram - Notify Staff",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        700,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "content": "PRODUCTION SETUP CHECKLIST\n\n1. Replace YOUR_CALENDAR_ID, YOUR_SPREADSHEET_ID and YOUR_TELEGRAM_CHAT_ID.\n2. Reconnect Google Calendar, Google Sheets, Gmail and Telegram credentials after import.\n3. Create a Bookings sheet with the mapped columns.\n4. Test with a staging calendar/account before production.\n5. Add a separate n8n Error Workflow using Error Trigger to alert staff on failures.\n6. Add cancellation/reschedule webhooks if your form supports them.\n7. Set the workflow timezone to your actual business timezone.\n8. Avoid storing sensitive data unnecessarily.",
+        "height": 360,
+        "width": 500
+      },
+      "id": "8f94ca4a-107a-4502-9a1b-a2d359772c0e",
+      "name": "Production Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        980,
+        -360
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - New Booking": {
+      "main": [
+        [
+          {
+            "node": "Validate + Normalize Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate + Normalize Booking": {
+      "main": [
+        [
+          {
+            "node": "Check Calendar Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Calendar Availability": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Availability": {
+      "main": [
+        [
+          {
+            "node": "Slot Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Available?": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Save Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail - Slot Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Save Booking": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - Create Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - Create Job": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Client Confirmation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - Notify Staff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Asia/Karachi"
+  },
+  "pinData": {},
+  "tags": []
+}
